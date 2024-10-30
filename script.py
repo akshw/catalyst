@@ -1,10 +1,8 @@
 from langchain_community.document_loaders import UnstructuredPDFLoader
-from langchain_community.embeddings import OllamaEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_community.chat_models import ChatOllama
 from langchain_core.runnables import RunnablePassthrough
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain_ollama import OllamaEmbeddings, ChatOllama
@@ -31,18 +29,21 @@ vector_db = Chroma.from_documents(
 local_model = "llama3.2:latest"
 llm = ChatOllama(model=local_model)
 myprompt = PromptTemplate(
-    input_variables=['questions'],
+    input_variables=['question'],
     template="""You are an AI language model assistant. Your task is to generate four different versions of the given user question to retrive relavent documents from a vector database.
       By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
       Provide these alternative questions seperated by newslines. Original question: {question}""",
 )
+
+
 
 retriver = MultiQueryRetriever.from_llm(
     vector_db.as_retriever(),
     llm,
     prompt=myprompt
 )
-#rag prompt
+
+
 template = '''Answer the question based only on the following context:
 {context}
 Question: {question}
@@ -55,6 +56,6 @@ chain = (
     | StrOutputParser()
 )
 
-#chain.invoke(input("type ur question "))
-print(chain.invoke("What is the problem"))
-print('hii')
+
+
+print(chain.invoke("What are the components used"))
