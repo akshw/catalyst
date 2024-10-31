@@ -1,61 +1,79 @@
-from langchain_community.document_loaders import UnstructuredPDFLoader
+from langchain_community.document_loaders.pdf import PyPDFLoader
+from langchain.schema.document import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain.prompts import ChatPromptTemplate, PromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain.retrievers.multi_query import MultiQueryRetriever
-from langchain_ollama import OllamaEmbeddings, ChatOllama
+from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_chroma import Chroma
+from langchain.prompts import ChatPromptTemplate
 
 
 path = './data.pdf'
-if(path):
-    loader = UnstructuredPDFLoader(file_path = path)
-    data = loader.load()
-else:
-    print('file not found')
+db_path = 'chroma_db'
 
 
-data_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=50)
-chunks = data_splitter.split_documents(data)
+def load_data():
+    data = PyPDFLoader(path)
+    return data.load()
 
-vector_db = Chroma.from_documents(
-    documents=chunks,
-    embedding=OllamaEmbeddings(model="nomic-embed-text:latest"),
-    collection_name="data-rag"
-)
+data = load_data()
 
 
-local_model = "llama3.2:latest"
-llm = ChatOllama(model=local_model)
-myprompt = PromptTemplate(
-    input_variables=['question'],
-    template="""You are an AI language model assistant. Your task is to generate four different versions of the given user question to retrive relavent documents from a vector database.
-      By generating multiple perspectives on the user question, your goal is to help the user overcome some of the limitations of the distance-based similarity search.
-      Provide these alternative questions seperated by newslines. Original question: {question}""",
-)
+def split_data(data: list[Document]):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size = 800,
+        chunk_overlap = 50,
+        length_function = len,
+        is_separator_regex = False
+    )
+    return text_splitter.split_documents(data)
+
+chunks = split_data(data)
 
 
-
-retriver = MultiQueryRetriever.from_llm(
-    vector_db.as_retriever(),
-    llm,
-    prompt=myprompt
-)
+def get_embeddings():
+    embeddings = OllamaEmbeddings(model='nomic-embed-text:latest')
+    return embeddings
 
 
-template = '''Answer the question based only on the following context:
+def add_to_db(chunks: list[Document]):
+    db = Chroma(
+        persist_directory=db_path, embedding_function=get_embeddings()
+    )
+    db.reset_collection()
+    db.add_documents(chunks)
+    print(f"Total documents in DB: {db._collection.count()}")
+
+add_to_db(chunks)
+
+
+PROMPT_TEMPLATE = """
+Answer the question based only on the following context:
+
 {context}
-Question: {question}
-'''
-prompt = ChatPromptTemplate.from_template(template)
-chain = (
-    {'context':retriver, 'question':RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
-)
+
+---
+
+Answer the question based on the above context: {question}
+"""
 
 
+def query(query_text: str):
+    db = Chroma(
+        persist_directory=db_path, embedding_function=get_embeddings()
+    )
+    results = db.similarity_search(query_text)
 
-print(chain.invoke("What are the components used"))
+    context_from_db = "\n\n---\n\n".join(doc.page_content for doc in results)
+    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+    prompt = prompt_template.format(context = context_from_db, question = query_text)
+    print(context_from_db,prompt_template, prompt)
+
+    model = OllamaLLM(model='llama3.2:latest')
+    llm_response = model.invoke(prompt)
+    print(llm_response)
+
+
+input_query = input("Ask question to rag: ")
+query(input_query)    
+    
+
+
